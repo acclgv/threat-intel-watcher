@@ -1,0 +1,46 @@
+name: Sync Threat Intel Feed (CISA KEV)
+
+on:
+  schedule:
+    # Runs daily at 05:37 UTC (asymmetric minute to avoid runner queue spikes)
+    - cron: '37 5 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI at any time
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Fetch and Update Threat Telemetry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python Runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ingest and Normalize Threat Intelligence
+        run: |
+          python scripts/sync_threat_intel.py
+
+      - name: Evaluate Changes and Commit to Main
+        run: |
+          git config user.name "Luis Garcia Villena"
+          git config user.email "luisysuagia@gmail.com"
+          git add data/ README.md
+          if git diff --staged --quiet; then
+            echo "No new exploited vulnerabilities detected today. Exiting cleanly without commit."
+          else
+            COUNT=$(jq '.count // "updates"' data/cisa_kev.json 2>/dev/null || echo "telemetry")
+            git commit -m "chore(threat-intel): update CISA KEV catalog [$COUNT CVEs] [skip ci]"
+            git push origin main
+          fi
+
+      - name: Keepalive Workflow (Prevent 60-Day Inactivity Pause)
+        uses: gautamkrishnar/keepalive-workflow@v2
+        if: always()
