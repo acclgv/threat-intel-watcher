@@ -32,13 +32,22 @@ jobs:
         run: |
           git config user.name "Luis Garcia Villena"
           git config user.email "luisysuagia@gmail.com"
-          git add data/ README.md
-          if git diff --staged --quiet; then
-            echo "No new exploited vulnerabilities detected today. Exiting cleanly without commit."
+          if [ -f data/.commit_msg ]; then
+            COMMIT_MSG=$(cat data/.commit_msg)
+            rm -f data/.commit_msg
+            git add data/ README.md
+            if git diff --staged --quiet; then
+              echo "No telemetry changes to commit. Repository is completely synchronized."
+            else
+              git commit -m "$COMMIT_MSG"
+              git push origin main
+            fi
           else
-            COUNT=$(jq '.count // "updates"' data/cisa_kev.json 2>/dev/null || echo "telemetry")
-            git commit -m "chore(threat-intel): update CISA KEV catalog [$COUNT CVEs] [skip ci]"
-            git push origin main
+            git add data/ README.md
+            if ! git diff --staged --quiet; then
+              git commit -m "chore(telemetry): verify daily threat feed integrity [skip ci]"
+              git push origin main
+            fi
           fi
 
       - name: Keepalive Workflow (Prevent 60-Day Inactivity Pause)

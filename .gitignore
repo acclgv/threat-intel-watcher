@@ -1,0 +1,10 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+
+# Temporary pipeline buffers
+data/.commit_msg
+.commit_msg

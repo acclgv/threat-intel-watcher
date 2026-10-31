@@ -8,6 +8,7 @@ Runs autonomously in GitHub Actions to maintain an immutable, version-controlled
 import json
 import os
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -15,31 +16,60 @@ FEED_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulne
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 OUTPUT_JSON = os.path.join(DATA_DIR, "cisa_kev.json")
 OUTPUT_MD = os.path.join(DATA_DIR, "LATEST_VULNERABILITIES.md")
+STATUS_JSON = os.path.join(DATA_DIR, "telemetry_status.json")
+COMMIT_MSG_PATH = os.path.join(DATA_DIR, ".commit_msg")
 README_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md")
 
 
-def fetch_kev_catalog():
+def fetch_kev_catalog(max_retries=3, backoff_seconds=2):
     print(f"[*] Fetching CISA KEV catalog from: {FEED_URL}")
-    req = urllib.request.Request(
-        FEED_URL,
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ThreatIntelWatcher/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as response:
-        if response.status != 200:
-            raise RuntimeError(f"HTTP error {response.status} while fetching feed")
-        raw_data = response.read().decode("utf-8")
-        return json.loads(raw_data)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ThreatIntelWatcher/1.0"}
+    req = urllib.request.Request(FEED_URL, headers=headers)
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"HTTP error {response.status} while fetching feed")
+                raw_data = response.read().decode("utf-8")
+                return json.loads(raw_data)
+        except Exception as err:
+            print(f"[!] Fetch attempt {attempt}/{max_retries} failed: {err}")
+            if attempt == max_retries:
+                raise
+            time.sleep(backoff_seconds * attempt)
+
+
+def load_existing_cves():
+    if not os.path.exists(OUTPUT_JSON):
+        return set(), None
+    try:
+        with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            cve_ids = {v.get("cveID") for v in data.get("vulnerabilities", []) if v.get("cveID")}
+            return cve_ids, data.get("catalogVersion")
+    except Exception as e:
+        print(f"[!] Warning reading existing {OUTPUT_JSON}: {e}")
+        return set(), None
 
 
 def process_and_save_data(catalog):
     os.makedirs(DATA_DIR, exist_ok=True)
+    existing_cves, existing_version = load_existing_cves()
+
     vulnerabilities = catalog.get("vulnerabilities", [])
     count = catalog.get("count", len(vulnerabilities))
     catalog_version = catalog.get("catalogVersion", "Unknown")
-    date_released = catalog.get("dateReleased", datetime.now(timezone.utc).isoformat())
+    now_utc = datetime.now(timezone.utc)
+    timestamp_str = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
 
     print(f"[+] Catalog version: {catalog_version}")
     print(f"[+] Total vulnerabilities indexed: {count}")
+
+    # Identify new CVEs
+    incoming_cves = {v.get("cveID") for v in vulnerabilities if v.get("cveID")}
+    new_cve_ids = incoming_cves - existing_cves if existing_cves else set()
+    new_cve_count = len(new_cve_ids)
 
     # Sort vulnerabilities deterministically: dateAdded DESC, then cveID DESC
     sorted_vulns = sorted(
@@ -60,7 +90,7 @@ def process_and_save_data(catalog):
         "# 🛡️ CISA Known Exploited Vulnerabilities (KEV) — Live Tracker",
         "",
         f"> **Automated Feed**: Updated continuously via GitHub Actions Git Scraping pipeline.  ",
-        f"> **Total Tracked CVEs**: `{count}` | **Catalog Version**: `{catalog_version}` | **Last Sync**: `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`",
+        f"> **Total Tracked CVEs**: `{count}` | **Catalog Version**: `{catalog_version}` | **Last Sync**: `{timestamp_str}`",
         "",
         "---",
         "",
@@ -105,7 +135,7 @@ This pipeline continuously monitors, ingests, normalizes, and version-controls t
 
 - **Total Exploited CVEs Tracked**: `{count}`
 - **Catalog Version**: `{catalog_version}`
-- **Last Automated Sync**: `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`
+- **Last Automated Sync**: `{timestamp_str}`
 - **Execution Engine**: 100% Cloud-Native GitHub Actions (Ubuntu ephemeral runners)
 
 ---
@@ -151,6 +181,33 @@ This repository implements the **Git Scraping** pattern:
     with open(README_PATH, "w", encoding="utf-8") as f:
         f.write(readme_content.strip() + "\n")
     print(f"[+] Updated root README to: {README_PATH}")
+
+    # Update telemetry status audit file
+    status_payload = {
+        "last_sync_utc": now_utc.isoformat(),
+        "status": "operational",
+        "catalog_version": catalog_version,
+        "total_cves": count,
+        "new_cves_detected": new_cve_count,
+        "environment": "GitHub Actions Cloud Runner",
+        "audited_by": "ThreatIntelWatcher Automated Pipeline"
+    }
+    with open(STATUS_JSON, "w", encoding="utf-8") as f:
+        json.dump(status_payload, f, indent=2, ensure_ascii=False)
+    print(f"[+] Saved telemetry status record to: {STATUS_JSON}")
+
+    # Generate semantic commit message
+    if new_cve_count > 0:
+        sample = ", ".join(sorted(list(new_cve_ids))[:3])
+        if new_cve_count > 3:
+            sample += f", +{new_cve_count - 3} more"
+        commit_msg = f"feat(threat-intel): ingest {new_cve_count} new exploited CVEs (total: {count}) [{sample}] [skip ci]"
+    else:
+        commit_msg = f"chore(telemetry): verify threat catalog integrity [{count} CVEs active] [skip ci]"
+
+    with open(COMMIT_MSG_PATH, "w", encoding="utf-8") as f:
+        f.write(commit_msg.strip() + "\n")
+    print(f"[+] Generated commit message: {commit_msg}")
 
 
 def main():

@@ -1,7 +1,7 @@
 # 🛡️ CISA Known Exploited Vulnerabilities (KEV) — Live Tracker
 
 > **Automated Feed**: Updated continuously via GitHub Actions Git Scraping pipeline.  
-> **Total Tracked CVEs**: `1766` | **Catalog Version**: `2026.10.30` | **Last Sync**: `2026-10-31 22:36:43 UTC`
+> **Total Tracked CVEs**: `1766` | **Catalog Version**: `2026.10.30` | **Last Sync**: `2026-10-31 22:42:53 UTC`
 
 ---
 
