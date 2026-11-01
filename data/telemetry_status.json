@@ -1,7 +1,9 @@
 {
+  "last_sync_utc": "2026-11-01T00:21:47.697Z",
   "catalog_version": "2026.10.30",
-  "total_cves": 1766,
-  "last_sync_utc": "2026-11-01T00:05:20.523642+00:00",
-  "status": "HEALTHY",
-  "audit_verification": "VERIFIED_API_CLOUD_TELEMETRY"
+  "total_cves_tracked": 1766,
+  "source": "CISA Known Exploited Vulnerabilities (KEV)",
+  "status": "OPERATIONAL",
+  "cloud_engine": "Google Cloud Scheduled Serverless Runtime",
+  "analyst": "Luis García Villena (Accenture Security Transformation)"
 }
